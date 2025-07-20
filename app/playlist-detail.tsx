@@ -79,15 +79,6 @@ export default function PlaylistDetailScreen() {
       }
 
       setPlaylist(playlistData);
-
-      // Filter out songs that are already in the playlist
-      const songsNotInPlaylist = allSongs.filter(
-        (song) =>
-          !playlistData.songs.some(
-            (playlistSong) => playlistSong.id === song.id
-          )
-      );
-      setAvailableSongs(songsNotInPlaylist);
     } catch (error) {
       console.error("Error loading playlist:", error);
       Alert.alert("Error", "Failed to load playlist");
@@ -212,6 +203,22 @@ export default function PlaylistDetailScreen() {
         },
       },
     ]);
+  };
+
+  const handleOpenAddSongsModal = async () => {
+    try {
+      // Get all songs and filter out the ones already in the playlist
+      const allSongs = await getDownloadedSongs();
+      const songsNotInPlaylist = allSongs.filter(
+        (song) =>
+          !playlist.songs.some((playlistSong) => playlistSong.id === song.id)
+      );
+      setAvailableSongs(songsNotInPlaylist);
+      setShowAddSongsModal(true);
+    } catch (error) {
+      console.error("Error preparing songs to add:", error);
+      Alert.alert("Error", "Could not open the song list.");
+    }
   };
 
   const handleAddSong = async (song: DownloadedSong) => {
@@ -430,7 +437,7 @@ export default function PlaylistDetailScreen() {
           </View>
           <TouchableOpacity
             style={styles.addButton}
-            onPress={() => setShowAddSongsModal(true)}
+            onPress={handleOpenAddSongsModal}
             activeOpacity={0.7}
           >
             <Ionicons name="add" size={24} color={Colors.dark.primary} />
@@ -518,7 +525,7 @@ export default function PlaylistDetailScreen() {
 
                       <TouchableOpacity
                         style={styles.addSongsButton}
-                        onPress={() => setShowAddSongsModal(true)}
+                        onPress={handleOpenAddSongsModal}
                         activeOpacity={0.8}
                       >
                         <Ionicons
@@ -578,7 +585,7 @@ export default function PlaylistDetailScreen() {
               </Text>
               <TouchableOpacity
                 style={styles.addFirstButton}
-                onPress={() => setShowAddSongsModal(true)}
+                onPress={handleOpenAddSongsModal}
                 activeOpacity={0.8}
               >
                 <Ionicons name="add" size={20} color={Colors.dark.background} />
