@@ -14,11 +14,8 @@ import {
   View,
   RefreshControl,
   Platform,
+  ScrollView,
 } from "react-native";
-import DraggableFlatList, {
-  RenderItemParams,
-  ScaleDecorator,
-} from "react-native-draggable-flatlist";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 import Colors from "../constants/Colors";
@@ -29,7 +26,6 @@ import {
   addSongToPlaylist,
   getPlaylist,
   removeSongFromPlaylist,
-  reorderSongsInPlaylist,
 } from "../services/playlist";
 import { getDownloadedSongs } from "../services/storage";
 
@@ -40,7 +36,7 @@ export default function PlaylistDetailScreen() {
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
   const [availableSongs, setAvailableSongs] = useState<DownloadedSong[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [addingSongIds, setAddingSongIds] = useState<Set<string>>(new Set());
+  const [addingSongs, setAddingSongs] = useState<Set<string>>(new Set());
   const router = useRouter();
   const {
     playSong,
@@ -51,7 +47,6 @@ export default function PlaylistDetailScreen() {
     playlistSource,
   } = useAudioPlayer();
 
-  // Use useFocusEffect to refresh data when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
       if (playlistId) {
@@ -60,7 +55,6 @@ export default function PlaylistDetailScreen() {
     }, [playlistId])
   );
 
-  // Keep the original useEffect for initial load
   useEffect(() => {
     if (playlistId && !playlist) {
       loadPlaylistData();
@@ -70,10 +64,7 @@ export default function PlaylistDetailScreen() {
   const loadPlaylistData = async () => {
     setIsLoading(true);
     try {
-      const [playlistData, allSongs] = await Promise.all([
-        getPlaylist(playlistId),
-        getDownloadedSongs(),
-      ]);
+      const playlistData = await getPlaylist(playlistId);
 
       if (!playlistData) {
         Alert.alert("Error", "Playlist not found");
@@ -109,19 +100,17 @@ export default function PlaylistDetailScreen() {
     }
 
     try {
-      // Check if the first song in the playlist is already playing
       if (
         currentSong?.id === playlist.songs[0].id &&
         isPlaying &&
         playlistSource === "playlist-detail"
       ) {
-        // If the same song is already playing, just navigate to the player
         router.push("/player");
         return;
       }
 
       setAudioPlaylist(playlist.songs);
-      setPlaylistSource("playlist-detail"); // Set source as playlist-detail
+      setPlaylistSource("playlist-detail");
       await playSong(playlist.songs[0]);
       router.push("/player");
     } catch (error) {
@@ -136,51 +125,17 @@ export default function PlaylistDetailScreen() {
     }
   };
 
-  const handleShufflePlay = async () => {
-    if (!playlist || playlist.songs.length === 0) {
-      Toast.show({
-        type: "info",
-        text1: "Empty Playlist",
-        text2: "This playlist has no songs to play",
-        position: "top",
-        visibilityTime: 3000,
-      });
-      return;
-    }
-
-    try {
-      // Shuffle the playlist
-      const shuffledSongs = [...playlist.songs].sort(() => Math.random() - 0.5);
-
-      setAudioPlaylist(shuffledSongs);
-      setPlaylistSource("playlist-detail");
-      await playSong(shuffledSongs[0]);
-      router.push("/player");
-    } catch (error) {
-      console.error("Error shuffling playlist:", error);
-      Toast.show({
-        type: "error",
-        text1: "Playback Error",
-        text2: "Failed to shuffle playlist",
-        position: "top",
-        visibilityTime: 3000,
-      });
-    }
-  };
-
   const handlePlaySong = async (song: DownloadedSong) => {
     if (!playlist) return;
 
     try {
-      // Check if the song is already playing
       if (currentSong?.id === song.id && isPlaying) {
-        // If the same song is already playing, just navigate to the player
         router.push("/player");
         return;
       }
 
       setAudioPlaylist(playlist.songs);
-      setPlaylistSource("playlist-detail"); // Set source as playlist-detail
+      setPlaylistSource("playlist-detail");
       await playSong(song);
       router.push("/player");
     } catch (error) {
@@ -198,10 +153,23 @@ export default function PlaylistDetailScreen() {
         onPress: async () => {
           try {
             await removeSongFromPlaylist(playlistId, song.id);
-            loadPlaylistData();
+            await loadPlaylistData();
+            Toast.show({
+              type: "success",
+              text1: "Song Removed",
+              text2: `"${song.title}" removed from playlist`,
+              position: "top",
+              visibilityTime: 2000,
+            });
           } catch (error) {
             console.error("Error removing song:", error);
-            Alert.alert("Error", "Failed to remove song");
+            Toast.show({
+              type: "error",
+              text1: "Error",
+              text2: "Failed to remove song",
+              position: "top",
+              visibilityTime: 3000,
+            });
           }
         },
       },
@@ -210,239 +178,195 @@ export default function PlaylistDetailScreen() {
 
   const handleOpenAddSongsModal = async () => {
     try {
-      // Get all songs and filter out the ones already in the playlist
       const allSongs = await getDownloadedSongs();
       const songsNotInPlaylist = allSongs.filter(
         (song) =>
-          !playlist.songs.some((playlistSong) => playlistSong.id === song.id)
+          !playlist?.songs.some((playlistSong) => playlistSong.id === song.id)
       );
       setAvailableSongs(songsNotInPlaylist);
       setShowAddSongsModal(true);
     } catch (error) {
       console.error("Error preparing songs to add:", error);
-      Alert.alert("Error", "Could not open the song list.");
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "Could not load available songs",
+        position: "top",
+        visibilityTime: 3000,
+      });
     }
   };
 
-  const handleAddSong = (song: DownloadedSong) => {
-    // Prevent multiple additions of the same song
-    if (addingSongIds.has(song.id)) {
-      return;
+  const handleAddSong = async (song: DownloadedSong) => {
+    if (addingSongs.has(song.id)) return;
+
+    setAddingSongs(prev => new Set([...prev, song.id]));
+
+    try {
+      await addSongToPlaylist(playlistId, song);
+      
+      // Remove from available songs
+      setAvailableSongs(prev => prev.filter(s => s.id !== song.id));
+      
+      // Reload playlist data
+      await loadPlaylistData();
+
+      Toast.show({
+        type: "success",
+        text1: "Song Added",
+        text2: `"${song.title}" added to playlist`,
+        position: "top",
+        visibilityTime: 2000,
+      });
+    } catch (error) {
+      console.error("Error adding song:", error);
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "Failed to add song to playlist",
+        position: "top",
+        visibilityTime: 3000,
+      });
+    } finally {
+      setAddingSongs(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(song.id);
+        return newSet;
+      });
     }
-
-    // Add to processing set
-    setAddingSongIds(prev => new Set([...prev, song.id]));
-
-    // Use setTimeout to ensure state update happens first
-    setTimeout(async () => {
-      try {
-        // Update playlist state immediately for better UX
-        if (playlist) {
-          const updatedPlaylist = {
-            ...playlist,
-            songs: [...playlist.songs, song],
-            updatedAt: new Date().toISOString(),
-            coverImage: playlist.coverImage || song.coverImage
-          };
-          setPlaylist(updatedPlaylist);
-        }
-
-        // Remove from available songs immediately
-        setAvailableSongs(prev => prev.filter(s => s.id !== song.id));
-
-        // Persist to storage in background
-        await addSongToPlaylist(playlistId, song);
-
-        Toast.show({
-          type: "success",
-          text1: "Song Added",
-          text2: `"${song.title}" added to playlist`,
-          position: "top",
-          visibilityTime: 2000,
-        });
-
-      } catch (error) {
-        console.error("Error adding song:", error);
-        
-        // Revert optimistic update on error
-        await loadPlaylistData();
-        
-        Toast.show({
-          type: "error",
-          text1: "Error",
-          text2: "Failed to add song to playlist",
-          position: "top",
-          visibilityTime: 3000,
-        });
-      } finally {
-        // Remove from processing set
-        setAddingSongIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(song.id);
-          return newSet;
-        });
-      }
-    }, 50);
   };
 
-  const renderSongItem = ({
-    item,
-    getIndex,
-    drag,
-    isActive,
-  }: RenderItemParams<DownloadedSong>) => {
-    const index = getIndex() ?? 0;
+  const renderSongItem = ({ item, index }: { item: DownloadedSong; index: number }) => {
     const isCurrentSong = currentSong?.id === item.id;
-    const showNowPlaying =
-      isCurrentSong && playlistSource === "playlist-detail";
+    const showNowPlaying = isCurrentSong && playlistSource === "playlist-detail";
 
     return (
-      <ScaleDecorator
-        activeScale={0.98}
-        inactiveScale={1}
-        dragItemOverflow={false}
+      <TouchableOpacity
+        style={[
+          styles.songItem,
+          showNowPlaying && styles.currentSongItem,
+        ]}
+        onPress={() => handlePlaySong(item)}
+        activeOpacity={0.7}
       >
-        <TouchableOpacity
-          style={[
-            styles.songItem,
-            showNowPlaying && styles.currentSongItem,
-            isActive && styles.draggingSongItem,
-          ]}
-          onPress={() => handlePlaySong(item)}
-          onLongPress={drag}
-          activeOpacity={0.7}
-          delayLongPress={100}
-        >
-          <View style={styles.songIndex}>
-            <Text
-              style={[
-                styles.indexText,
-                showNowPlaying && styles.currentIndexText,
-              ]}
-            >
-              {index + 1}
-            </Text>
-          </View>
+        <View style={styles.songIndex}>
+          <Text
+            style={[
+              styles.indexText,
+              showNowPlaying && styles.currentIndexText,
+            ]}
+          >
+            {index + 1}
+          </Text>
+        </View>
 
-          <View style={styles.coverContainer}>
-            <Image
-              source={{ uri: item.coverImage }}
-              style={styles.coverImage}
+        <View style={styles.coverContainer}>
+          <Image
+            source={{ uri: item.coverImage }}
+            style={styles.coverImage}
+          />
+          {showNowPlaying && (
+            <LinearGradient
+              colors={["rgba(29, 185, 84, 0.8)", "rgba(29, 185, 84, 0.3)"]}
+              style={styles.currentSongOverlay}
             />
-            {showNowPlaying && (
-              <LinearGradient
-                colors={["rgba(29, 185, 84, 0.8)", "rgba(29, 185, 84, 0.3)"]}
-                style={styles.currentSongOverlay}
-              />
-            )}
-            <View
-              style={[
-                styles.playIconOverlay,
-                showNowPlaying && styles.currentPlayIcon,
-              ]}
-            >
-              <Ionicons
-                name={
-                  isPlaying && showNowPlaying ? "pause-circle" : "play-circle"
-                }
-                size={28}
-                color={
-                  showNowPlaying ? Colors.dark.primary : "rgba(255,255,255,0.9)"
-                }
-              />
-            </View>
+          )}
+          <View
+            style={[
+              styles.playIconOverlay,
+              showNowPlaying && styles.currentPlayIcon,
+            ]}
+          >
+            <Ionicons
+              name={
+                isPlaying && showNowPlaying ? "pause-circle" : "play-circle"
+              }
+              size={28}
+              color={
+                showNowPlaying ? Colors.dark.primary : "rgba(255,255,255,0.9)"
+              }
+            />
           </View>
+        </View>
 
-          <View style={styles.songInfo}>
-            <Text
-              style={[
-                styles.songTitle,
-                showNowPlaying && styles.currentSongTitle,
-              ]}
-              numberOfLines={1}
-            >
-              {item.title}
-            </Text>
-            <Text
-              style={[
-                styles.artistName,
-                showNowPlaying && styles.currentArtistName,
-              ]}
-              numberOfLines={1}
-            >
-              {item.artist}
-            </Text>
-            {showNowPlaying && (
-              <View style={styles.nowPlayingIndicator}>
-                <View style={styles.soundWave}>
-                  <View style={[styles.bar, styles.bar1]} />
-                  <View style={[styles.bar, styles.bar2]} />
-                  <View style={[styles.bar, styles.bar3]} />
-                </View>
-                <Text style={styles.nowPlayingText}>Now Playing</Text>
+        <View style={styles.songInfo}>
+          <Text
+            style={[
+              styles.songTitle,
+              showNowPlaying && styles.currentSongTitle,
+            ]}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <Text
+            style={[
+              styles.artistName,
+              showNowPlaying && styles.currentArtistName,
+            ]}
+            numberOfLines={1}
+          >
+            {item.artist}
+          </Text>
+          {showNowPlaying && (
+            <View style={styles.nowPlayingIndicator}>
+              <View style={styles.soundWave}>
+                <View style={[styles.bar, styles.bar1]} />
+                <View style={[styles.bar, styles.bar2]} />
+                <View style={[styles.bar, styles.bar3]} />
               </View>
-            )}
-          </View>
+              <Text style={styles.nowPlayingText}>Now Playing</Text>
+            </View>
+          )}
+        </View>
 
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              style={styles.dragHandle}
-              onPressIn={drag}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons
-                name="reorder-three-outline"
-                size={24}
-                color={Colors.dark.subText}
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => handleRemoveSong(item)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons
-                name="remove-circle-outline"
-                size={24}
-                color={Colors.dark.error}
-              />
-            </TouchableOpacity>
-          </View>
+        <TouchableOpacity
+          style={styles.removeButton}
+          onPress={() => handleRemoveSong(item)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons
+            name="remove-circle-outline"
+            size={24}
+            color={Colors.dark.error}
+          />
         </TouchableOpacity>
-      </ScaleDecorator>
+      </TouchableOpacity>
     );
   };
 
-  const renderAvailableSongItem = ({ item }: { item: DownloadedSong }) => (
-    <TouchableOpacity
-      style={styles.availableSongItem}
-      onPress={() => handleAddSong(item)}
-      activeOpacity={0.7}
-      disabled={addingSongIds.has(item.id)}
-    >
-      <Image source={{ uri: item.coverImage }} style={styles.smallCoverImage} />
-      <View style={styles.songInfo}>
-        <Text style={styles.songTitle} numberOfLines={1}>
-          {item.title}
-        </Text>
-        <Text style={styles.artistName} numberOfLines={1}>
-          {item.artist}
-        </Text>
-      </View>
-      {addingSongIds.has(item.id) ? (
-        <ActivityIndicator size="small" color={Colors.dark.primary} />
-      ) : (
-        <Ionicons
-          name="add-circle-outline"
-          size={24}
-          color={Colors.dark.primary}
-        />
-      )}
-    </TouchableOpacity>
-  );
+  const renderAvailableSongItem = ({ item }: { item: DownloadedSong }) => {
+    const isAdding = addingSongs.has(item.id);
+    
+    return (
+      <TouchableOpacity
+        style={[styles.availableSongItem, isAdding && styles.addingSongItem]}
+        onPress={() => handleAddSong(item)}
+        activeOpacity={0.7}
+        disabled={isAdding}
+      >
+        <Image source={{ uri: item.coverImage }} style={styles.smallCoverImage} />
+        <View style={styles.songInfo}>
+          <Text style={styles.songTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <Text style={styles.artistName} numberOfLines={1}>
+            {item.artist}
+          </Text>
+        </View>
+        {isAdding ? (
+          <ActivityIndicator size="small" color={Colors.dark.primary} />
+        ) : (
+          <Ionicons
+            name="add-circle-outline"
+            size={24}
+            color={Colors.dark.primary}
+          />
+        )}
+      </TouchableOpacity>
+    );
+  };
 
-  // Instead of showing a full-screen loading state, we'll maintain the UI structure
-  // and show loading indicators within the existing layout
   if (!playlist) {
     return (
       <SafeAreaView style={styles.container}>
@@ -489,7 +413,7 @@ export default function PlaylistDetailScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Songs List */}
+        {/* Content */}
         {isLoading && !refreshing ? (
           <View style={styles.inlineLoadingContainer}>
             <Ionicons
@@ -499,12 +423,9 @@ export default function PlaylistDetailScreen() {
             />
             <Text style={styles.loadingText}>Loading playlist...</Text>
           </View>
-        ) : playlist.songs.length > 0 ? (
-          <DraggableFlatList
-            data={playlist.songs}
-            renderItem={renderSongItem}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
+        ) : (
+          <ScrollView
+            style={styles.scrollContainer}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -514,186 +435,150 @@ export default function PlaylistDetailScreen() {
               />
             }
             showsVerticalScrollIndicator={false}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-            activationDistance={Platform.OS === 'android' ? 20 : 10}
-            animationConfig={{ 
-              damping: Platform.OS === 'android' ? 15 : 20, 
-              stiffness: Platform.OS === 'android' ? 150 : 200 
-            }}
-            dragHitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
-            ListHeaderComponent={
-              <View>
-                {/* Playlist Info */}
-                <View style={styles.playlistHeader}>
-                  <View style={styles.playlistCoverContainer}>
-                    {playlist.coverImage ? (
-                      <Image
-                        source={{ uri: playlist.coverImage }}
-                        style={styles.playlistCover}
+          >
+            {/* Playlist Header */}
+            <View style={styles.playlistHeader}>
+              <View style={styles.playlistCoverContainer}>
+                {playlist.coverImage ? (
+                  <Image
+                    source={{ uri: playlist.coverImage }}
+                    style={styles.playlistCover}
+                  />
+                ) : (
+                  <LinearGradient
+                    colors={[
+                      Colors.dark.primary + "40",
+                      Colors.dark.primary + "20",
+                    ]}
+                    style={styles.defaultPlaylistCover}
+                  >
+                    <Ionicons
+                      name="musical-notes"
+                      size={32}
+                      color={Colors.dark.primary}
+                    />
+                  </LinearGradient>
+                )}
+              </View>
+
+              <View style={styles.playlistMeta}>
+                <Text style={styles.playlistName}>{playlist.name}</Text>
+                <Text style={styles.playlistStats}>
+                  {playlist.songs.length} song
+                  {playlist.songs.length !== 1 ? "s" : ""}
+                </Text>
+
+                <View style={styles.playlistActions}>
+                  {playlist.songs.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.playAllButton}
+                      onPress={handlePlayPlaylist}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons
+                        name="play"
+                        size={16}
+                        color={Colors.dark.background}
                       />
-                    ) : (
-                      <LinearGradient
-                        colors={[
-                          Colors.dark.primary + "40",
-                          Colors.dark.primary + "20",
-                        ]}
-                        style={styles.defaultPlaylistCover}
-                      >
-                        <Ionicons
-                          name="musical-notes"
-                          size={32}
-                          color={Colors.dark.primary}
-                        />
-                      </LinearGradient>
-                    )}
-                  </View>
+                      <Text style={styles.playAllText}>Play All</Text>
+                    </TouchableOpacity>
+                  )}
 
-                  <View style={styles.playlistMeta}>
-                    <Text style={styles.playlistName}>{playlist.name}</Text>
-                    <Text style={styles.playlistStats}>
-                      {playlist.songs.length} song
-                      {playlist.songs.length !== 1 ? "s" : ""}
-                    </Text>
-
-                    <View style={styles.playlistActions}>
-                      {playlist.songs.length > 0 && (
-                        <TouchableOpacity
-                          style={styles.playAllButton}
-                          onPress={handlePlayPlaylist}
-                          activeOpacity={0.8}
-                        >
-                          <Ionicons
-                            name="play"
-                            size={16}
-                            color={Colors.dark.background}
-                          />
-                          <Text style={styles.playAllText}>Play All</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity
-                        style={styles.addSongsButton}
-                        onPress={handleOpenAddSongsModal}
-                        activeOpacity={0.8}
-                      >
-                        <Ionicons
-                          name="add"
-                          size={16}
-                          color={Colors.dark.text}
-                        />
-                        <Text style={styles.addSongsText}>Add Songs</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.addSongsButton}
+                    onPress={handleOpenAddSongsModal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="add"
+                      size={16}
+                      color={Colors.dark.text}
+                    />
+                    <Text style={styles.addSongsText}>Add Songs</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-            }
-            onDragEnd={({ from, to }) => {
-              if (from !== to) {
-                // Debounce the reorder operation for Android
-                const performReorder = () => {
-                  const newSongs = [...playlist.songs];
-                  const [movedSong] = newSongs.splice(from, 1);
-                  newSongs.splice(to, 0, movedSong);
-
-                  setPlaylist({
-                    ...playlist,
-                    songs: newSongs,
-                  });
-
-                  // Persist changes with longer delay on Android
-                  setTimeout(() => {
-                    reorderSongsInPlaylist(playlistId, from, to).catch(
-                      (error) => {
-                        console.error("Error reordering songs:", error);
-                        loadPlaylistData();
-                        Alert.alert("Error", "Failed to reorder songs");
-                      }
-                    );
-                  }, Platform.OS === 'android' ? 200 : 100);
-                };
-
-                if (Platform.OS === 'android') {
-                  // Use setTimeout for Android to prevent freezing
-                  setTimeout(performReorder, 50);
-                } else {
-                  // Use requestAnimationFrame for iOS
-                  requestAnimationFrame(performReorder);
-                }
-              }
-            }}
-          />
-        ) : (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyStateContainer}>
-              <Ionicons
-                name="musical-note-outline"
-                size={64}
-                color={Colors.dark.subText}
-              />
-              <Text style={styles.emptyText}>No songs in this playlist</Text>
-              <Text style={styles.emptySubText}>
-                Add songs from your library to get started
-              </Text>
-              <TouchableOpacity
-                style={styles.addFirstButton}
-                onPress={handleOpenAddSongsModal}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add" size={20} color={Colors.dark.background} />
-                <Text style={styles.addFirstButtonText}>Add Songs</Text>
-              </TouchableOpacity>
             </View>
-          </View>
+
+            {/* Songs List */}
+            {playlist.songs.length > 0 ? (
+              <View style={styles.songsContainer}>
+                {playlist.songs.map((song, index) => (
+                  <View key={song.id}>
+                    {renderSongItem({ item: song, index })}
+                    {index < playlist.songs.length - 1 && <View style={styles.separator} />}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyStateContainer}>
+                  <Ionicons
+                    name="musical-note-outline"
+                    size={64}
+                    color={Colors.dark.subText}
+                  />
+                  <Text style={styles.emptyText}>No songs in this playlist</Text>
+                  <Text style={styles.emptySubText}>
+                    Add songs from your library to get started
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.addFirstButton}
+                    onPress={handleOpenAddSongsModal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={20} color={Colors.dark.background} />
+                    <Text style={styles.addFirstButtonText}>Add Songs</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </ScrollView>
         )}
 
         {/* Add Songs Modal */}
-        {showAddSongsModal && (
-          <Modal
-            visible={showAddSongsModal}
-            animationType="fade"
-            transparent={true}
-            onRequestClose={() => setShowAddSongsModal(false)}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContainer}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Add Songs to Playlist</Text>
-                  <TouchableOpacity
-                    style={styles.closeButton}
-                    onPress={() => setShowAddSongsModal(false)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="close" size={24} color={Colors.dark.text} />
-                  </TouchableOpacity>
-                </View>
-
-                {availableSongs.length > 0 ? (
-                  <FlatList
-                    data={availableSongs}
-                    renderItem={renderAvailableSongItem}
-                    keyExtractor={(item) => item.id}
-                    contentContainerStyle={styles.modalListContent}
-                    showsVerticalScrollIndicator={false}
-                    ItemSeparatorComponent={() => <View style={styles.separator} />}
-                  />
-                ) : (
-                  <View style={styles.noSongsContainer}>
-                    <Ionicons
-                      name="checkmark-circle-outline"
-                      size={64}
-                      color={Colors.dark.primary}
-                    />
-                    <Text style={styles.noSongsText}>All songs added!</Text>
-                    <Text style={styles.noSongsSubText}>
-                      You've added all your downloaded songs to this playlist
-                    </Text>
-                  </View>
-                )}
-              </View>
+        <Modal
+          visible={showAddSongsModal}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setShowAddSongsModal(false)}
+        >
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Songs to Playlist</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowAddSongsModal(false)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={24} color={Colors.dark.text} />
+              </TouchableOpacity>
             </View>
-          </Modal>
-        )}
+
+            {availableSongs.length > 0 ? (
+              <FlatList
+                data={availableSongs}
+                renderItem={renderAvailableSongItem}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={styles.modalListContent}
+                showsVerticalScrollIndicator={false}
+                ItemSeparatorComponent={() => <View style={styles.separator} />}
+              />
+            ) : (
+              <View style={styles.noSongsContainer}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={64}
+                  color={Colors.dark.primary}
+                />
+                <Text style={styles.noSongsText}>All songs added!</Text>
+                <Text style={styles.noSongsSubText}>
+                  You've added all your downloaded songs to this playlist
+                </Text>
+              </View>
+            )}
+          </SafeAreaView>
+        </Modal>
         <Toast />
       </LinearGradient>
     </SafeAreaView>
@@ -748,6 +633,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginLeft: 16,
   },
+  scrollContainer: {
+    flex: 1,
+  },
   playlistHeader: {
     flexDirection: "row",
     padding: 20,
@@ -776,7 +664,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-
   playlistMeta: {
     flex: 1,
     alignItems: "flex-start",
@@ -822,7 +709,6 @@ const styles = StyleSheet.create({
     color: Colors.dark.background,
     marginLeft: 6,
   },
-
   addSongsButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -840,7 +726,7 @@ const styles = StyleSheet.create({
     color: Colors.dark.text,
     marginLeft: 6,
   },
-  listContent: {
+  songsContainer: {
     paddingHorizontal: 20,
     paddingBottom: 100,
   },
@@ -865,17 +751,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
-  },
-  draggingSongItem: {
-    backgroundColor: Colors.dark.primary + "30",
-    borderColor: Colors.dark.primary,
-    borderWidth: 2,
-    elevation: 8,
-    shadowColor: Colors.dark.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 5,
-    transform: [{ scale: 1.02 }],
   },
   songIndex: {
     width: 28,
@@ -944,15 +819,6 @@ const styles = StyleSheet.create({
   currentArtistName: {
     color: Colors.dark.primary + "CC",
   },
-  actionButtons: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 8,
-  },
-  dragHandle: {
-    padding: 4,
-    marginRight: 8,
-  },
   removeButton: {
     padding: 4,
   },
@@ -961,6 +827,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 32,
+    minHeight: 300,
   },
   emptyStateContainer: {
     alignItems: "center",
@@ -995,11 +862,6 @@ const styles = StyleSheet.create({
     color: Colors.dark.background,
     marginLeft: 8,
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
   inlineLoadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -1020,19 +882,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: Colors.dark.error,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
   modalContainer: {
+    flex: 1,
     backgroundColor: Colors.dark.background,
-    borderRadius: 20,
-    width: "100%",
-    maxHeight: "80%",
-    overflow: "hidden",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1070,6 +922,10 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: Colors.dark.border + "40",
+  },
+  addingSongItem: {
+    opacity: 0.6,
+    backgroundColor: Colors.dark.primary + "10",
   },
   smallCoverImage: {
     width: 50,
