@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
   RefreshControl,
+  Platform,
 } from "react-native";
 import DraggableFlatList, {
   RenderItemParams,
@@ -223,9 +224,13 @@ export default function PlaylistDetailScreen() {
 
   const handleAddSong = async (song: DownloadedSong) => {
     try {
-      await addSongToPlaylist(playlistId, song);
+      // Show loading state to prevent multiple taps
       setShowAddSongsModal(false);
-      loadPlaylistData();
+      await addSongToPlaylist(playlistId, song);
+      // Use setTimeout to ensure modal closes before reloading data
+      setTimeout(async () => {
+        await loadPlaylistData();
+      }, 100);
       Toast.show({
         type: "success",
         text1: "Song Added",
@@ -235,6 +240,7 @@ export default function PlaylistDetailScreen() {
       });
     } catch (error) {
       console.error("Error adding song:", error);
+      setShowAddSongsModal(false);
       Toast.show({
         type: "error",
         text1: "Error",
@@ -378,6 +384,7 @@ export default function PlaylistDetailScreen() {
       style={styles.availableSongItem}
       onPress={() => handleAddSong(item)}
       activeOpacity={0.7}
+      disabled={!showAddSongsModal} // Prevent multiple taps
     >
       <Image source={{ uri: item.coverImage }} style={styles.smallCoverImage} />
       <View style={styles.songInfo}>
@@ -470,9 +477,12 @@ export default function PlaylistDetailScreen() {
             }
             showsVerticalScrollIndicator={false}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
-            activationDistance={10}
-            animationConfig={{ damping: 20, stiffness: 200 }}
-            dragHitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activationDistance={Platform.OS === 'android' ? 20 : 10}
+            animationConfig={{ 
+              damping: Platform.OS === 'android' ? 15 : 20, 
+              stiffness: Platform.OS === 'android' ? 150 : 200 
+            }}
+            dragHitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
             ListHeaderComponent={
               <View>
                 {/* Playlist Info */}
@@ -542,32 +552,36 @@ export default function PlaylistDetailScreen() {
             }
             onDragEnd={({ from, to }) => {
               if (from !== to) {
-                // Create a copy of the current songs array
-                const newSongs = [...playlist.songs];
-                const [movedSong] = newSongs.splice(from, 1);
-                newSongs.splice(to, 0, movedSong);
+                // Debounce the reorder operation for Android
+                const performReorder = () => {
+                  const newSongs = [...playlist.songs];
+                  const [movedSong] = newSongs.splice(from, 1);
+                  newSongs.splice(to, 0, movedSong);
 
-                // Update the local state with animation disabled to prevent flicker
-                // We're wrapping this in requestAnimationFrame to ensure smooth transition
-                requestAnimationFrame(() => {
                   setPlaylist({
                     ...playlist,
                     songs: newSongs,
                   });
-                });
 
-                // Persist the changes to storage with a small delay
-                // This helps prevent UI jank during the animation
-                setTimeout(() => {
-                  reorderSongsInPlaylist(playlistId, from, to).catch(
-                    (error) => {
-                      console.error("Error reordering songs:", error);
-                      // Revert to original order if there's an error
-                      loadPlaylistData();
-                      Alert.alert("Error", "Failed to reorder songs");
-                    }
-                  );
-                }, 100);
+                  // Persist changes with longer delay on Android
+                  setTimeout(() => {
+                    reorderSongsInPlaylist(playlistId, from, to).catch(
+                      (error) => {
+                        console.error("Error reordering songs:", error);
+                        loadPlaylistData();
+                        Alert.alert("Error", "Failed to reorder songs");
+                      }
+                    );
+                  }, Platform.OS === 'android' ? 200 : 100);
+                };
+
+                if (Platform.OS === 'android') {
+                  // Use setTimeout for Android to prevent freezing
+                  setTimeout(performReorder, 50);
+                } else {
+                  // Use requestAnimationFrame for iOS
+                  requestAnimationFrame(performReorder);
+                }
               }
             }}
           />
@@ -598,9 +612,10 @@ export default function PlaylistDetailScreen() {
         {/* Add Songs Modal */}
         <Modal
           visible={showAddSongsModal}
-          animationType="fade"
+          animationType={Platform.OS === 'android' ? 'slide' : 'fade'}
           transparent={true}
           onRequestClose={() => setShowAddSongsModal(false)}
+          hardwareAccelerated={Platform.OS === 'android'}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
@@ -622,6 +637,9 @@ export default function PlaylistDetailScreen() {
                   keyExtractor={(item) => item.id}
                   contentContainerStyle={styles.modalListContent}
                   showsVerticalScrollIndicator={false}
+                  removeClippedSubviews={Platform.OS === 'android'}
+                  maxToRenderPerBatch={Platform.OS === 'android' ? 5 : 10}
+                  windowSize={Platform.OS === 'android' ? 5 : 10}
                   ItemSeparatorComponent={() => (
                     <View style={styles.separator} />
                   )}

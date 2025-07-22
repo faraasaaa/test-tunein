@@ -127,6 +127,8 @@ export const addSongToPlaylist = async (playlistId: string, song: DownloadedSong
         playlist.coverImage = playlist.songs[0].coverImage;
       }
       
+      // Add a small delay to prevent race conditions
+      await new Promise(resolve => setTimeout(resolve, 50));
       await savePlaylist(playlist);
     } else {
       throw new Error('Song already exists in playlist');
