@@ -62,28 +62,16 @@ export const getPlaylists = async (): Promise<Playlist[]> => {
 
 // Save a playlist
 export const savePlaylist = async (playlist: Playlist): Promise<void> => {
-  try {
-    console.log('savePlaylist called for:', playlist.name);
-    
-    const playlists = await getPlaylists();
-    const existingIndex = playlists.findIndex(p => p.id === playlist.id);
-    
-    if (existingIndex > -1) {
-      console.log('Updating existing playlist at index:', existingIndex);
-      playlists[existingIndex] = playlist;
-    } else {
-      console.log('Adding new playlist');
-      playlists.push(playlist);
-    }
-    
-    console.log('Saving to AsyncStorage...');
-    await AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(playlists));
-    console.log('Playlist saved to AsyncStorage successfully');
-    
-  } catch (error) {
-    console.error('Error saving playlist:', error);
-    throw error;
+  const playlists = await getPlaylists();
+  const existingIndex = playlists.findIndex(p => p.id === playlist.id);
+  
+  if (existingIndex > -1) {
+    playlists[existingIndex] = playlist;
+  } else {
+    playlists.push(playlist);
   }
+  
+  await AsyncStorage.setItem(PLAYLISTS_KEY, JSON.stringify(playlists));
 };
 
 // Create a new playlist
@@ -114,48 +102,31 @@ export const deletePlaylist = async (playlistId: string): Promise<void> => {
 
 // Add song to playlist
 export const addSongToPlaylist = async (playlistId: string, song: DownloadedSong): Promise<void> => {
-  try {
-    console.log('addSongToPlaylist called with:', { playlistId, songTitle: song.title });
-    
-    const playlists = await getPlaylists();
-    console.log('Retrieved playlists:', playlists.length);
-    
-    const playlistIndex = playlists.findIndex(p => p.id === playlistId);
-    
-    if (playlistIndex === -1) {
-      console.error('Playlist not found:', playlistId);
-      throw new Error('Playlist not found');
-    }
-    
-    const playlist = playlists[playlistIndex];
-    console.log('Found playlist:', playlist.name, 'with', playlist.songs.length, 'songs');
-    
-    // Check if song already exists in playlist
-    const songExists = playlist.songs.some(s => s.id === song.id);
-    console.log('Song exists in playlist:', songExists);
-    
-    if (songExists) {
-      console.error('Song already exists in playlist');
-      throw new Error('Song already exists in playlist');
-    }
-    
-    console.log('Adding song to playlist...');
-    playlist.songs.push(song);
-    playlist.updatedAt = new Date().toISOString();
-    
-    // Update cover image to first song's cover if not set
-    if (!playlist.coverImage && playlist.songs.length > 0) {
-      playlist.coverImage = playlist.songs[0].coverImage;
-    }
-    
-    console.log('Saving playlist...');
-    await savePlaylist(playlist);
-    console.log('Playlist saved successfully');
-    
-  } catch (error) {
-    console.error('Error adding song to playlist:', error);
-    throw error;
+  const playlists = await getPlaylists();
+  const playlistIndex = playlists.findIndex(p => p.id === playlistId);
+  
+  if (playlistIndex === -1) {
+    throw new Error('Playlist not found');
   }
+  
+  const playlist = playlists[playlistIndex];
+  
+  // Check if song already exists
+  if (playlist.songs.some(s => s.id === song.id)) {
+    return; // Silently ignore if already exists
+  }
+  
+  // Add song
+  playlist.songs.push(song);
+  playlist.updatedAt = new Date().toISOString();
+  
+  // Update cover image if needed
+  if (!playlist.coverImage) {
+    playlist.coverImage = song.coverImage;
+  }
+  
+  // Save playlist
+  await savePlaylist(playlist);
 };
 
 // Remove song from playlist

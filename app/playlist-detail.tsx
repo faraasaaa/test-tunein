@@ -40,7 +40,7 @@ export default function PlaylistDetailScreen() {
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
   const [availableSongs, setAvailableSongs] = useState<DownloadedSong[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [isAddingSong, setIsAddingSong] = useState(false);
+  const [addingSongIds, setAddingSongIds] = useState<Set<string>>(new Set());
   const router = useRouter();
   const {
     playSong,
@@ -224,47 +224,65 @@ export default function PlaylistDetailScreen() {
     }
   };
 
-  const handleAddSong = async (song: DownloadedSong) => {
-    if (isAddingSong) {
-      console.log('Already adding a song, ignoring tap');
+  const handleAddSong = (song: DownloadedSong) => {
+    // Prevent multiple additions of the same song
+    if (addingSongIds.has(song.id)) {
       return;
     }
 
-    console.log('Starting to add song:', song.title);
-    setIsAddingSong(true);
-    
-    try {
-      console.log('Adding song to playlist...');
-      await addSongToPlaylist(playlistId, song);
-      
-      console.log('Song added successfully, closing modal...');
-      setShowAddSongsModal(false);
-      
-      console.log('Reloading playlist data...');
-      await loadPlaylistData();
-      
-      Toast.show({
-        type: "success",
-        text1: "Song Added",
-        text2: `"${song.title}" added to playlist`,
-        position: "top",
-        visibilityTime: 2000,
-      });
-      
-      console.log('Add song operation completed successfully');
-    } catch (error) {
-      console.error("Error adding song:", error);
-      Toast.show({
-        type: "error",
-        text1: "Error",
-        text2: "Failed to add song to playlist",
-        position: "top",
-        visibilityTime: 3000,
-      });
-    } finally {
-      setIsAddingSong(false);
-      console.log('Add song operation finished');
-    }
+    // Add to processing set
+    setAddingSongIds(prev => new Set([...prev, song.id]));
+
+    // Use setTimeout to ensure state update happens first
+    setTimeout(async () => {
+      try {
+        // Update playlist state immediately for better UX
+        if (playlist) {
+          const updatedPlaylist = {
+            ...playlist,
+            songs: [...playlist.songs, song],
+            updatedAt: new Date().toISOString(),
+            coverImage: playlist.coverImage || song.coverImage
+          };
+          setPlaylist(updatedPlaylist);
+        }
+
+        // Remove from available songs immediately
+        setAvailableSongs(prev => prev.filter(s => s.id !== song.id));
+
+        // Persist to storage in background
+        await addSongToPlaylist(playlistId, song);
+
+        Toast.show({
+          type: "success",
+          text1: "Song Added",
+          text2: `"${song.title}" added to playlist`,
+          position: "top",
+          visibilityTime: 2000,
+        });
+
+      } catch (error) {
+        console.error("Error adding song:", error);
+        
+        // Revert optimistic update on error
+        await loadPlaylistData();
+        
+        Toast.show({
+          type: "error",
+          text1: "Error",
+          text2: "Failed to add song to playlist",
+          position: "top",
+          visibilityTime: 3000,
+        });
+      } finally {
+        // Remove from processing set
+        setAddingSongIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(song.id);
+          return newSet;
+        });
+      }
+    }, 50);
   };
 
   const renderSongItem = ({
@@ -400,7 +418,7 @@ export default function PlaylistDetailScreen() {
       style={styles.availableSongItem}
       onPress={() => handleAddSong(item)}
       activeOpacity={0.7}
-      disabled={isAddingSong}
+      disabled={addingSongIds.has(item.id)}
     >
       <Image source={{ uri: item.coverImage }} style={styles.smallCoverImage} />
       <View style={styles.songInfo}>
@@ -411,7 +429,7 @@ export default function PlaylistDetailScreen() {
           {item.artist}
         </Text>
       </View>
-      {isAddingSong ? (
+      {addingSongIds.has(item.id) ? (
         <ActivityIndicator size="small" color={Colors.dark.primary} />
       ) : (
         <Ionicons
@@ -630,72 +648,52 @@ export default function PlaylistDetailScreen() {
         )}
 
         {/* Add Songs Modal */}
-        <Modal
-          visible={showAddSongsModal}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setShowAddSongsModal(false)}
-          hardwareAccelerated={true}
-          statusBarTranslucent={Platform.OS === 'android'}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Add Songs to Playlist</Text>
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => {
-                    if (!isAddingSong) {
-                      setShowAddSongsModal(false);
-                    }
-                  }}
-                  activeOpacity={0.7}
-                  disabled={isAddingSong}
-                >
-                  <Ionicons 
-                    name="close" 
-                    size={24} 
-                    color={isAddingSong ? Colors.dark.textDim : Colors.dark.text} 
-                  />
-                </TouchableOpacity>
-              </View>
-
-              {availableSongs.length > 0 ? (
-                <FlatList
-                  data={availableSongs}
-                  renderItem={renderAvailableSongItem}
-                  keyExtractor={(item) => item.id}
-                  contentContainerStyle={styles.modalListContent}
-                  showsVerticalScrollIndicator={false}
-                  removeClippedSubviews={true}
-                  maxToRenderPerBatch={10}
-                  windowSize={10}
-                  initialNumToRender={10}
-                  getItemLayout={(data, index) => ({
-                    length: 82, // Approximate height of each item
-                    offset: 82 * index,
-                    index,
-                  })}
-                  ItemSeparatorComponent={() => (
-                    <View style={styles.separator} />
-                  )}
-                />
-              ) : (
-                <View style={styles.noSongsContainer}>
-                  <Ionicons
-                    name="checkmark-circle-outline"
-                    size={64}
-                    color={Colors.dark.primary}
-                  />
-                  <Text style={styles.noSongsText}>All songs added!</Text>
-                  <Text style={styles.noSongsSubText}>
-                    You've added all your downloaded songs to this playlist
-                  </Text>
+        {showAddSongsModal && (
+          <Modal
+            visible={showAddSongsModal}
+            animationType="fade"
+            transparent={true}
+            onRequestClose={() => setShowAddSongsModal(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContainer}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Add Songs to Playlist</Text>
+                  <TouchableOpacity
+                    style={styles.closeButton}
+                    onPress={() => setShowAddSongsModal(false)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="close" size={24} color={Colors.dark.text} />
+                  </TouchableOpacity>
                 </View>
-              )}
+
+                {availableSongs.length > 0 ? (
+                  <FlatList
+                    data={availableSongs}
+                    renderItem={renderAvailableSongItem}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={styles.modalListContent}
+                    showsVerticalScrollIndicator={false}
+                    ItemSeparatorComponent={() => <View style={styles.separator} />}
+                  />
+                ) : (
+                  <View style={styles.noSongsContainer}>
+                    <Ionicons
+                      name="checkmark-circle-outline"
+                      size={64}
+                      color={Colors.dark.primary}
+                    />
+                    <Text style={styles.noSongsText}>All songs added!</Text>
+                    <Text style={styles.noSongsSubText}>
+                      You've added all your downloaded songs to this playlist
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
-          </View>
-        </Modal>
+          </Modal>
+        )}
         <Toast />
       </LinearGradient>
     </SafeAreaView>
