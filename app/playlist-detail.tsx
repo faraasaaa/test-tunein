@@ -5,6 +5,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  ActivityIndicator,
   FlatList,
   Modal,
   StyleSheet,
@@ -39,6 +40,7 @@ export default function PlaylistDetailScreen() {
   const [showAddSongsModal, setShowAddSongsModal] = useState(false);
   const [availableSongs, setAvailableSongs] = useState<DownloadedSong[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [isAddingSong, setIsAddingSong] = useState(false);
   const router = useRouter();
   const {
     playSong,
@@ -223,14 +225,24 @@ export default function PlaylistDetailScreen() {
   };
 
   const handleAddSong = async (song: DownloadedSong) => {
+    if (isAddingSong) {
+      console.log('Already adding a song, ignoring tap');
+      return;
+    }
+
+    console.log('Starting to add song:', song.title);
+    setIsAddingSong(true);
+    
     try {
-      // Show loading state to prevent multiple taps
-      setShowAddSongsModal(false);
+      console.log('Adding song to playlist...');
       await addSongToPlaylist(playlistId, song);
-      // Use setTimeout to ensure modal closes before reloading data
-      setTimeout(async () => {
-        await loadPlaylistData();
-      }, 100);
+      
+      console.log('Song added successfully, closing modal...');
+      setShowAddSongsModal(false);
+      
+      console.log('Reloading playlist data...');
+      await loadPlaylistData();
+      
       Toast.show({
         type: "success",
         text1: "Song Added",
@@ -238,9 +250,10 @@ export default function PlaylistDetailScreen() {
         position: "top",
         visibilityTime: 2000,
       });
+      
+      console.log('Add song operation completed successfully');
     } catch (error) {
       console.error("Error adding song:", error);
-      setShowAddSongsModal(false);
       Toast.show({
         type: "error",
         text1: "Error",
@@ -248,6 +261,9 @@ export default function PlaylistDetailScreen() {
         position: "top",
         visibilityTime: 3000,
       });
+    } finally {
+      setIsAddingSong(false);
+      console.log('Add song operation finished');
     }
   };
 
@@ -384,7 +400,7 @@ export default function PlaylistDetailScreen() {
       style={styles.availableSongItem}
       onPress={() => handleAddSong(item)}
       activeOpacity={0.7}
-      disabled={!showAddSongsModal} // Prevent multiple taps
+      disabled={isAddingSong}
     >
       <Image source={{ uri: item.coverImage }} style={styles.smallCoverImage} />
       <View style={styles.songInfo}>
@@ -395,11 +411,15 @@ export default function PlaylistDetailScreen() {
           {item.artist}
         </Text>
       </View>
-      <Ionicons
-        name="add-circle-outline"
-        size={24}
-        color={Colors.dark.primary}
-      />
+      {isAddingSong ? (
+        <ActivityIndicator size="small" color={Colors.dark.primary} />
+      ) : (
+        <Ionicons
+          name="add-circle-outline"
+          size={24}
+          color={Colors.dark.primary}
+        />
+      )}
     </TouchableOpacity>
   );
 
@@ -612,10 +632,11 @@ export default function PlaylistDetailScreen() {
         {/* Add Songs Modal */}
         <Modal
           visible={showAddSongsModal}
-          animationType={Platform.OS === 'android' ? 'slide' : 'fade'}
+          animationType="slide"
           transparent={true}
           onRequestClose={() => setShowAddSongsModal(false)}
-          hardwareAccelerated={Platform.OS === 'android'}
+          hardwareAccelerated={true}
+          statusBarTranslucent={Platform.OS === 'android'}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
@@ -623,10 +644,19 @@ export default function PlaylistDetailScreen() {
                 <Text style={styles.modalTitle}>Add Songs to Playlist</Text>
                 <TouchableOpacity
                   style={styles.closeButton}
-                  onPress={() => setShowAddSongsModal(false)}
+                  onPress={() => {
+                    if (!isAddingSong) {
+                      setShowAddSongsModal(false);
+                    }
+                  }}
                   activeOpacity={0.7}
+                  disabled={isAddingSong}
                 >
-                  <Ionicons name="close" size={24} color={Colors.dark.text} />
+                  <Ionicons 
+                    name="close" 
+                    size={24} 
+                    color={isAddingSong ? Colors.dark.textDim : Colors.dark.text} 
+                  />
                 </TouchableOpacity>
               </View>
 
@@ -637,9 +667,15 @@ export default function PlaylistDetailScreen() {
                   keyExtractor={(item) => item.id}
                   contentContainerStyle={styles.modalListContent}
                   showsVerticalScrollIndicator={false}
-                  removeClippedSubviews={Platform.OS === 'android'}
-                  maxToRenderPerBatch={Platform.OS === 'android' ? 5 : 10}
-                  windowSize={Platform.OS === 'android' ? 5 : 10}
+                  removeClippedSubviews={true}
+                  maxToRenderPerBatch={10}
+                  windowSize={10}
+                  initialNumToRender={10}
+                  getItemLayout={(data, index) => ({
+                    length: 82, // Approximate height of each item
+                    offset: 82 * index,
+                    index,
+                  })}
                   ItemSeparatorComponent={() => (
                     <View style={styles.separator} />
                   )}
