@@ -623,7 +623,7 @@ export default function PlaylistDetailScreen() {
             />
             <Text style={styles.loadingText}>Loading playlist...</Text>
           </View>
-        ) : (
+        ) : playlist && playlist.songs.length > 0 ? (
           <DraggableFlatList
             data={listData}
             onDragEnd={handleListDragEnd}
@@ -652,6 +652,7 @@ export default function PlaylistDetailScreen() {
               restDisplacementThreshold: 0.2,
             }}
           />
+        ) : (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyStateContainer}>
               <Ionicons
