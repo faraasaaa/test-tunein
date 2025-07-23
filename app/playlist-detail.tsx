@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   ActivityIndicator,
@@ -17,6 +17,10 @@ import {
   ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import DraggableFlatList, {
+  ScaleDecorator,
+  RenderItemParams,
+} from "react-native-draggable-flatlist";
 import Toast from "react-native-toast-message";
 import Colors from "../constants/Colors";
 import { useAudioPlayer } from "../contexts/AudioPlayerContext";
@@ -26,6 +30,7 @@ import {
   addSongToPlaylist,
   getPlaylist,
   removeSongFromPlaylist,
+  reorderSongsInPlaylist,
 } from "../services/playlist";
 import { getDownloadedSongs } from "../services/storage";
 
@@ -37,6 +42,7 @@ export default function PlaylistDetailScreen() {
   const [availableSongs, setAvailableSongs] = useState<DownloadedSong[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [addingSongs, setAddingSongs] = useState<Set<string>>(new Set());
+  const [isDragging, setIsDragging] = useState(false);
   const router = useRouter();
   const {
     playSong,
@@ -236,104 +242,171 @@ export default function PlaylistDetailScreen() {
     }
   };
 
-  const renderSongItem = ({ item, index }: { item: DownloadedSong; index: number }) => {
+  const handleDragEnd = useCallback(async ({ data, from, to }: { data: DownloadedSong[], from: number, to: number }) => {
+    if (from === to) {
+      setIsDragging(false);
+      return;
+    }
+
+    try {
+      // Update local state immediately for smooth UI
+      setPlaylist(prev => prev ? { ...prev, songs: data } : null);
+      
+      // Save to storage
+      await reorderSongsInPlaylist(playlistId, from, to);
+      
+      // Update audio playlist if this playlist is currently playing
+      if (playlistSource === "playlist-detail") {
+        setAudioPlaylist(data);
+      }
+
+      Toast.show({
+        type: "success",
+        text1: "Songs Reordered",
+        text2: "Playlist order updated",
+        position: "top",
+        visibilityTime: 1500,
+      });
+    } catch (error) {
+      console.error("Error reordering songs:", error);
+      // Revert local state on error
+      await loadPlaylistData();
+      Toast.show({
+        type: "error",
+        text1: "Error",
+        text2: "Failed to reorder songs",
+        position: "top",
+        visibilityTime: 3000,
+      });
+    } finally {
+      setIsDragging(false);
+    }
+  }, [playlistId, playlistSource, setAudioPlaylist]);
+
+  const handleDragBegin = useCallback(() => {
+    setIsDragging(true);
+  }, []);
+
+  const renderSongItem = useCallback(({ item, drag, isActive, getIndex }: RenderItemParams<DownloadedSong>) => {
+    const index = getIndex?.() ?? 0;
     const isCurrentSong = currentSong?.id === item.id;
     const showNowPlaying = isCurrentSong && playlistSource === "playlist-detail";
 
     return (
-      <TouchableOpacity
-        style={[
-          styles.songItem,
-          showNowPlaying && styles.currentSongItem,
-        ]}
-        onPress={() => handlePlaySong(item)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.songIndex}>
-          <Text
-            style={[
-              styles.indexText,
-              showNowPlaying && styles.currentIndexText,
-            ]}
-          >
-            {index + 1}
-          </Text>
-        </View>
+      <ScaleDecorator>
+        <TouchableOpacity
+          style={[
+            styles.songItem,
+            showNowPlaying && styles.currentSongItem,
+            isActive && styles.draggingSongItem,
+          ]}
+          onPress={() => !isActive && handlePlaySong(item)}
+          onLongPress={drag}
+          disabled={isActive}
+          activeOpacity={0.7}
+        >
+          <View style={styles.songIndex}>
+            <Text
+              style={[
+                styles.indexText,
+                showNowPlaying && styles.currentIndexText,
+                isActive && styles.draggingIndexText,
+              ]}
+            >
+              {index + 1}
+            </Text>
+          </View>
 
-        <View style={styles.coverContainer}>
-          <Image
-            source={{ uri: item.coverImage }}
-            style={styles.coverImage}
-          />
-          {showNowPlaying && (
-            <LinearGradient
-              colors={["rgba(29, 185, 84, 0.8)", "rgba(29, 185, 84, 0.3)"]}
-              style={styles.currentSongOverlay}
+          <View style={styles.coverContainer}>
+            <Image
+              source={{ uri: item.coverImage }}
+              style={styles.coverImage}
             />
+            {showNowPlaying && (
+              <LinearGradient
+                colors={["rgba(29, 185, 84, 0.8)", "rgba(29, 185, 84, 0.3)"]}
+                style={styles.currentSongOverlay}
+              />
+            )}
+            <View
+              style={[
+                styles.playIconOverlay,
+                showNowPlaying && styles.currentPlayIcon,
+                isActive && styles.draggingPlayIcon,
+              ]}
+            >
+              <Ionicons
+                name={
+                  isActive ? "move" :
+                  isPlaying && showNowPlaying ? "pause-circle" : "play-circle"
+                }
+                size={isActive ? 24 : 28}
+                color={
+                  isActive ? Colors.dark.text :
+                  showNowPlaying ? Colors.dark.primary : "rgba(255,255,255,0.9)"
+                }
+              />
+            </View>
+          </View>
+
+          <View style={styles.songInfo}>
+            <Text
+              style={[
+                styles.songTitle,
+                showNowPlaying && styles.currentSongTitle,
+                isActive && styles.draggingSongTitle,
+              ]}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+            <Text
+              style={[
+                styles.artistName,
+                showNowPlaying && styles.currentArtistName,
+                isActive && styles.draggingArtistName,
+              ]}
+              numberOfLines={1}
+            >
+              {item.artist}
+            </Text>
+            {showNowPlaying && !isActive && (
+              <View style={styles.nowPlayingIndicator}>
+                <View style={styles.soundWave}>
+                  <View style={[styles.bar, styles.bar1]} />
+                  <View style={[styles.bar, styles.bar2]} />
+                  <View style={[styles.bar, styles.bar3]} />
+                </View>
+                <Text style={styles.nowPlayingText}>Now Playing</Text>
+              </View>
+            )}
+          </View>
+
+          {!isActive && (
+            <TouchableOpacity
+              style={styles.removeButton}
+              onPress={() => handleRemoveSong(item)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons
+                name="remove-circle-outline"
+                size={24}
+                color={Colors.dark.error}
+              />
+            </TouchableOpacity>
           )}
-          <View
-            style={[
-              styles.playIconOverlay,
-              showNowPlaying && styles.currentPlayIcon,
-            ]}
-          >
+
+          <View style={styles.dragHandle}>
             <Ionicons
-              name={
-                isPlaying && showNowPlaying ? "pause-circle" : "play-circle"
-              }
-              size={28}
-              color={
-                showNowPlaying ? Colors.dark.primary : "rgba(255,255,255,0.9)"
-              }
+              name="reorder-three-outline"
+              size={20}
+              color={isActive ? Colors.dark.primary : Colors.dark.textDim}
             />
           </View>
-        </View>
-
-        <View style={styles.songInfo}>
-          <Text
-            style={[
-              styles.songTitle,
-              showNowPlaying && styles.currentSongTitle,
-            ]}
-            numberOfLines={1}
-          >
-            {item.title}
-          </Text>
-          <Text
-            style={[
-              styles.artistName,
-              showNowPlaying && styles.currentArtistName,
-            ]}
-            numberOfLines={1}
-          >
-            {item.artist}
-          </Text>
-          {showNowPlaying && (
-            <View style={styles.nowPlayingIndicator}>
-              <View style={styles.soundWave}>
-                <View style={[styles.bar, styles.bar1]} />
-                <View style={[styles.bar, styles.bar2]} />
-                <View style={[styles.bar, styles.bar3]} />
-              </View>
-              <Text style={styles.nowPlayingText}>Now Playing</Text>
-            </View>
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={styles.removeButton}
-          onPress={() => handleRemoveSong(item)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons
-            name="remove-circle-outline"
-            size={24}
-            color={Colors.dark.error}
-          />
         </TouchableOpacity>
-      </TouchableOpacity>
+      </ScaleDecorator>
     );
-  };
+  }, [currentSong, playlistSource, isPlaying, handlePlaySong, handleRemoveSong]);
 
   const renderAvailableSongItem = ({ item }: { item: DownloadedSong }) => {
     const isAdding = addingSongs.has(item.id);
@@ -435,6 +508,7 @@ export default function PlaylistDetailScreen() {
               />
             }
             showsVerticalScrollIndicator={false}
+            scrollEnabled={!isDragging}
           >
             {/* Playlist Header */}
             <View style={styles.playlistHeader}>
@@ -500,15 +574,35 @@ export default function PlaylistDetailScreen() {
               </View>
             </View>
 
-            {/* Songs List */}
+            {/* Songs List with Drag and Drop */}
             {playlist.songs.length > 0 ? (
               <View style={styles.songsContainer}>
-                {playlist.songs.map((song, index) => (
-                  <View key={song.id}>
-                    {renderSongItem({ item: song, index })}
-                    {index < playlist.songs.length - 1 && <View style={styles.separator} />}
-                  </View>
-                ))}
+                <View style={styles.dragInstructions}>
+                  <Ionicons name="information-circle-outline" size={16} color={Colors.dark.textDim} />
+                  <Text style={styles.dragInstructionsText}>
+                    Long press and drag to reorder songs
+                  </Text>
+                </View>
+                <DraggableFlatList
+                  data={playlist.songs}
+                  onDragEnd={handleDragEnd}
+                  onDragBegin={handleDragBegin}
+                  keyExtractor={(item) => item.id}
+                  renderItem={renderSongItem}
+                  contentContainerStyle={styles.draggableListContent}
+                  showsVerticalScrollIndicator={false}
+                  scrollEnabled={true}
+                  activationDistance={10}
+                  dragItemOverflow={true}
+                  animationConfig={{
+                    damping: 20,
+                    mass: 0.2,
+                    stiffness: 100,
+                    overshootClamping: false,
+                    restSpeedThreshold: 0.2,
+                    restDisplacementThreshold: 0.2,
+                  }}
+                />
               </View>
             ) : (
               <View style={styles.emptyContainer}>
@@ -730,6 +824,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 100,
   },
+  dragInstructions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  dragInstructionsText: {
+    fontSize: 12,
+    color: Colors.dark.textDim,
+    marginLeft: 6,
+    fontStyle: "italic",
+  },
+  draggableListContent: {
+    paddingBottom: 20,
+  },
   separator: {
     height: 8,
   },
@@ -739,6 +849,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.card,
     borderRadius: 12,
     padding: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border + "40",
   },
@@ -751,6 +862,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
+  },
+  draggingSongItem: {
+    backgroundColor: Colors.dark.primary + "20",
+    borderColor: Colors.dark.primary,
+    borderWidth: 2,
+    elevation: 8,
+    shadowColor: Colors.dark.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
   songIndex: {
     width: 28,
@@ -766,6 +887,10 @@ const styles = StyleSheet.create({
   currentIndexText: {
     color: Colors.dark.primary,
     fontWeight: "700",
+  },
+  draggingIndexText: {
+    color: Colors.dark.primary,
+    fontWeight: "800",
   },
   coverContainer: {
     position: "relative",
@@ -798,6 +923,9 @@ const styles = StyleSheet.create({
   currentPlayIcon: {
     backgroundColor: "rgba(0,0,0,0.2)",
   },
+  draggingPlayIcon: {
+    backgroundColor: "rgba(29, 185, 84, 0.3)",
+  },
   songInfo: {
     flex: 1,
     marginLeft: 12,
@@ -812,6 +940,10 @@ const styles = StyleSheet.create({
   currentSongTitle: {
     color: Colors.dark.primary,
   },
+  draggingSongTitle: {
+    color: Colors.dark.primary,
+    fontWeight: "700",
+  },
   artistName: {
     fontSize: 14,
     color: Colors.dark.subText,
@@ -819,8 +951,17 @@ const styles = StyleSheet.create({
   currentArtistName: {
     color: Colors.dark.primary + "CC",
   },
+  draggingArtistName: {
+    color: Colors.dark.primary + "DD",
+  },
   removeButton: {
     padding: 4,
+    marginRight: 8,
+  },
+  dragHandle: {
+    padding: 8,
+    justifyContent: "center",
+    alignItems: "center",
   },
   emptyContainer: {
     flex: 1,
