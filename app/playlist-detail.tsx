@@ -653,25 +653,47 @@ export default function PlaylistDetailScreen() {
             }}
           />
         ) : (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyStateContainer}>
-              <Ionicons
-                name="musical-note-outline"
-                size={64}
-                color={Colors.dark.subText}
+          <DraggableFlatList
+            data={listData}
+            onDragEnd={handleListDragEnd}
+            onDragBegin={handleDragBegin}
+            keyExtractor={(item) => item.id}
+            renderItem={renderListItem}
+            contentContainerStyle={styles.draggableListContent}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={true}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={Colors.dark.primary}
+                colors={[Colors.dark.primary]}
               />
-              <Text style={styles.emptyText}>No songs in this playlist</Text>
-              <Text style={styles.emptySubText}>
-                Add songs from your library to get started
-              </Text>
-              <TouchableOpacity
-                style={styles.addFirstButton}
-                onPress={handleOpenAddSongsModal}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add" size={20} color={Colors.dark.background} />
-                <Text style={styles.addFirstButtonText}>Add Songs</Text>
-              </TouchableOpacity>
+            }
+            ListEmptyComponent={() => (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyStateContainer}>
+                  <Ionicons
+                    name="musical-note-outline"
+                    size={64}
+                    color={Colors.dark.subText}
+                  />
+                  <Text style={styles.emptyText}>No songs in this playlist</Text>
+                  <Text style={styles.emptySubText}>
+                    Add songs from your library to get started
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.addFirstButton}
+                    onPress={handleOpenAddSongsModal}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add" size={20} color={Colors.dark.background} />
+                    <Text style={styles.addFirstButtonText}>Add Songs</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          />
             </View>
           </View>
         )}
