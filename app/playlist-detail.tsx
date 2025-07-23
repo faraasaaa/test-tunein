@@ -14,7 +14,6 @@ import {
   View,
   RefreshControl,
   Platform,
-  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DraggableFlatList, {
@@ -440,6 +439,134 @@ export default function PlaylistDetailScreen() {
     );
   };
 
+  // Create header component for the playlist info
+  const renderPlaylistHeader = () => (
+    <View style={styles.playlistHeader}>
+      <View style={styles.playlistCoverContainer}>
+        {playlist?.coverImage ? (
+          <Image
+            source={{ uri: playlist.coverImage }}
+            style={styles.playlistCover}
+          />
+        ) : (
+          <LinearGradient
+            colors={[
+              Colors.dark.primary + "40",
+              Colors.dark.primary + "20",
+            ]}
+            style={styles.defaultPlaylistCover}
+          >
+            <Ionicons
+              name="musical-notes"
+              size={32}
+              color={Colors.dark.primary}
+            />
+          </LinearGradient>
+        )}
+      </View>
+
+      <View style={styles.playlistMeta}>
+        <Text style={styles.playlistName}>{playlist?.name}</Text>
+        <Text style={styles.playlistStats}>
+          {playlist?.songs.length} song
+          {playlist?.songs.length !== 1 ? "s" : ""}
+        </Text>
+
+        <View style={styles.playlistActions}>
+          {playlist && playlist.songs.length > 0 && (
+            <TouchableOpacity
+              style={styles.playAllButton}
+              onPress={handlePlayPlaylist}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="play"
+                size={16}
+                color={Colors.dark.background}
+              />
+              <Text style={styles.playAllText}>Play All</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={styles.addSongsButton}
+            onPress={handleOpenAddSongsModal}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name="add"
+              size={16}
+              color={Colors.dark.text}
+            />
+            <Text style={styles.addSongsText}>Add Songs</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+
+  // Create drag instructions component
+  const renderDragInstructions = () => (
+    <View style={styles.dragInstructions}>
+      <Ionicons name="information-circle-outline" size={16} color={Colors.dark.textDim} />
+      <Text style={styles.dragInstructionsText}>
+        Long press and drag to reorder songs
+      </Text>
+    </View>
+  );
+
+  // Prepare data for DraggableFlatList with header items
+  const listData = React.useMemo(() => {
+    if (!playlist) return [];
+    
+    const headerItems = [
+      { type: 'header', id: 'playlist-header' },
+      { type: 'instructions', id: 'drag-instructions' },
+    ];
+    
+    const songItems = playlist.songs.map(song => ({
+      type: 'song',
+      id: song.id,
+      ...song
+    }));
+    
+    return [...headerItems, ...songItems];
+  }, [playlist]);
+
+  const renderListItem = useCallback(({ item, drag, isActive, getIndex }: RenderItemParams<any>) => {
+    if (item.type === 'header') {
+      return renderPlaylistHeader();
+    }
+    
+    if (item.type === 'instructions') {
+      return renderDragInstructions();
+    }
+    
+    if (item.type === 'song') {
+      // Calculate the actual song index (subtract header items)
+      const songIndex = (getIndex?.() ?? 0) - 2;
+      return renderSongItem({ 
+        item, 
+        drag, 
+        isActive, 
+        getIndex: () => songIndex 
+      });
+    }
+    
+    return null;
+  }, [renderSongItem]);
+
+  const handleListDragEnd = useCallback(({ data, from, to }: { data: any[], from: number, to: number }) => {
+    // Only allow dragging song items (not header items)
+    if (from < 2 || to < 2) return;
+    
+    // Extract only song items and calculate actual indices
+    const songItems = data.filter(item => item.type === 'song');
+    const actualFrom = from - 2;
+    const actualTo = to - 2;
+    
+    handleDragEnd({ data: songItems, from: actualFrom, to: actualTo });
+  }, [handleDragEnd]);
   if (!playlist) {
     return (
       <SafeAreaView style={styles.container}>
@@ -497,8 +624,17 @@ export default function PlaylistDetailScreen() {
             <Text style={styles.loadingText}>Loading playlist...</Text>
           </View>
         ) : (
-          <ScrollView
-            style={styles.scrollContainer}
+          <DraggableFlatList
+            data={listData}
+            onDragEnd={handleListDragEnd}
+            onDragBegin={handleDragBegin}
+            keyExtractor={(item) => item.id}
+            renderItem={renderListItem}
+            contentContainerStyle={styles.draggableListContent}
+            showsVerticalScrollIndicator={false}
+            scrollEnabled={true}
+            activationDistance={10}
+            dragItemOverflow={true}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -507,127 +643,36 @@ export default function PlaylistDetailScreen() {
                 colors={[Colors.dark.primary]}
               />
             }
-            showsVerticalScrollIndicator={false}
-            scrollEnabled={!isDragging}
-          >
-            {/* Playlist Header */}
-            <View style={styles.playlistHeader}>
-              <View style={styles.playlistCoverContainer}>
-                {playlist.coverImage ? (
-                  <Image
-                    source={{ uri: playlist.coverImage }}
-                    style={styles.playlistCover}
-                  />
-                ) : (
-                  <LinearGradient
-                    colors={[
-                      Colors.dark.primary + "40",
-                      Colors.dark.primary + "20",
-                    ]}
-                    style={styles.defaultPlaylistCover}
-                  >
-                    <Ionicons
-                      name="musical-notes"
-                      size={32}
-                      color={Colors.dark.primary}
-                    />
-                  </LinearGradient>
-                )}
-              </View>
-
-              <View style={styles.playlistMeta}>
-                <Text style={styles.playlistName}>{playlist.name}</Text>
-                <Text style={styles.playlistStats}>
-                  {playlist.songs.length} song
-                  {playlist.songs.length !== 1 ? "s" : ""}
-                </Text>
-
-                <View style={styles.playlistActions}>
-                  {playlist.songs.length > 0 && (
-                    <TouchableOpacity
-                      style={styles.playAllButton}
-                      onPress={handlePlayPlaylist}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons
-                        name="play"
-                        size={16}
-                        color={Colors.dark.background}
-                      />
-                      <Text style={styles.playAllText}>Play All</Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <TouchableOpacity
-                    style={styles.addSongsButton}
-                    onPress={handleOpenAddSongsModal}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons
-                      name="add"
-                      size={16}
-                      color={Colors.dark.text}
-                    />
-                    <Text style={styles.addSongsText}>Add Songs</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+            animationConfig={{
+              damping: 20,
+              mass: 0.2,
+              stiffness: 100,
+              overshootClamping: false,
+              restSpeedThreshold: 0.2,
+              restDisplacementThreshold: 0.2,
+            }}
+          />
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyStateContainer}>
+              <Ionicons
+                name="musical-note-outline"
+                size={64}
+                color={Colors.dark.subText}
+              />
+              <Text style={styles.emptyText}>No songs in this playlist</Text>
+              <Text style={styles.emptySubText}>
+                Add songs from your library to get started
+              </Text>
+              <TouchableOpacity
+                style={styles.addFirstButton}
+                onPress={handleOpenAddSongsModal}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={20} color={Colors.dark.background} />
+                <Text style={styles.addFirstButtonText}>Add Songs</Text>
+              </TouchableOpacity>
             </View>
-
-            {/* Songs List with Drag and Drop */}
-            {playlist.songs.length > 0 ? (
-              <View style={styles.songsContainer}>
-                <View style={styles.dragInstructions}>
-                  <Ionicons name="information-circle-outline" size={16} color={Colors.dark.textDim} />
-                  <Text style={styles.dragInstructionsText}>
-                    Long press and drag to reorder songs
-                  </Text>
-                </View>
-                <DraggableFlatList
-                  data={playlist.songs}
-                  onDragEnd={handleDragEnd}
-                  onDragBegin={handleDragBegin}
-                  keyExtractor={(item) => item.id}
-                  renderItem={renderSongItem}
-                  contentContainerStyle={styles.draggableListContent}
-                  showsVerticalScrollIndicator={false}
-                  scrollEnabled={true}
-                  activationDistance={10}
-                  dragItemOverflow={true}
-                  animationConfig={{
-                    damping: 20,
-                    mass: 0.2,
-                    stiffness: 100,
-                    overshootClamping: false,
-                    restSpeedThreshold: 0.2,
-                    restDisplacementThreshold: 0.2,
-                  }}
-                />
-              </View>
-            ) : (
-              <View style={styles.emptyContainer}>
-                <View style={styles.emptyStateContainer}>
-                  <Ionicons
-                    name="musical-note-outline"
-                    size={64}
-                    color={Colors.dark.subText}
-                  />
-                  <Text style={styles.emptyText}>No songs in this playlist</Text>
-                  <Text style={styles.emptySubText}>
-                    Add songs from your library to get started
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.addFirstButton}
-                    onPress={handleOpenAddSongsModal}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="add" size={20} color={Colors.dark.background} />
-                    <Text style={styles.addFirstButtonText}>Add Songs</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </ScrollView>
+          </View>
         )}
 
         {/* Add Songs Modal */}
@@ -727,9 +772,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginLeft: 16,
   },
-  scrollContainer: {
-    flex: 1,
-  },
   playlistHeader: {
     flexDirection: "row",
     padding: 20,
@@ -820,15 +862,12 @@ const styles = StyleSheet.create({
     color: Colors.dark.text,
     marginLeft: 6,
   },
-  songsContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 100,
-  },
   dragInstructions: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
+    paddingHorizontal: 20,
     marginBottom: 8,
   },
   dragInstructionsText: {
@@ -838,7 +877,7 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
   draggableListContent: {
-    paddingBottom: 20,
+    paddingBottom: 100,
   },
   separator: {
     height: 8,
@@ -849,6 +888,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.card,
     borderRadius: 12,
     padding: 12,
+    marginHorizontal: 20,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.dark.border + "40",
